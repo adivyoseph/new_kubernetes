@@ -72,7 +72,6 @@ import (
 	"k8s.io/kubernetes/pkg/apis/storage"
 	storageutil "k8s.io/kubernetes/pkg/apis/storage/util"
 	"k8s.io/kubernetes/pkg/printers"
-	"k8s.io/kubernetes/pkg/util/node"
 )
 
 const (
@@ -952,9 +951,7 @@ func printPod(pod *api.Pod, options printers.GenerateOptions) ([]metav1.TableRow
 		}
 	}
 
-	if pod.DeletionTimestamp != nil && pod.Status.Reason == node.NodeUnreachablePodReason {
-		reason = "Unknown"
-	} else if pod.DeletionTimestamp != nil {
+	if pod.DeletionTimestamp != nil {
 		reason = "Terminating"
 	}
 
