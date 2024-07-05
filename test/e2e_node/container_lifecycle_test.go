@@ -2415,6 +2415,39 @@ var _ = SIGDescribe(nodefeature.SidecarContainers, "Containers Lifecycle", func(
 			ginkgo.It("should start a regular container", func() {
 				framework.ExpectNoError(results.HasRestarted(regular1))
 			})
+
+			ginkgo.It("should not restart when updated with a new image", func() {
+				client := e2epod.NewPodClient(f)
+				podSpec, err := client.Get(context.TODO(), podSpec.Name, metav1.GetOptions{})
+				framework.ExpectNoError(err)
+				results = parseOutput(context.TODO(), f, podSpec)
+
+				tStartRestartableInit1, err := results.TimeOfStart(restartableInit1)
+				framework.ExpectNoError(err)
+				tStartRegular1, err := results.TimeOfStart(regular1)
+				framework.ExpectNoError(err)
+
+				client.Update(context.TODO(), podSpec.Name, func(pod *v1.Pod) {
+					pod.Spec.InitContainers[0].Image = "fakeimage"
+				})
+				framework.ExpectNoError(err)
+
+				updatedPodSpec, err := client.Get(context.TODO(), podSpec.Name, metav1.GetOptions{})
+				framework.ExpectNoError(err)
+				results = parseOutput(context.TODO(), f, updatedPodSpec)
+
+				tStartUpdatedRestartableInit1, err := results.TimeOfStart(restartableInit1)
+				framework.ExpectNoError(err)
+				tStartUpdatedRegular1, err := results.TimeOfStart(regular1)
+				framework.ExpectNoError(err)
+
+				ginkgo.By("ensuring not restarted the regular container", func() {
+					gomega.Expect(tStartUpdatedRegular1).To(gomega.Equal(tStartRegular1))
+				})
+				ginkgo.By("ensuring not restarted the init container", func() {
+					gomega.Expect(tStartUpdatedRestartableInit1).To(gomega.Equal(tStartRestartableInit1))
+				})
+			})
 		})
 
 		ginkgo.When("a restartable init container fails to start because of a bad image", ginkgo.Ordered, func() {
