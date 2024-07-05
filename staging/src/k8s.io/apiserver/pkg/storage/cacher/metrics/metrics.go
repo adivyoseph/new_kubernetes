@@ -167,6 +167,29 @@ var (
 			StabilityLevel: compbasemetrics.ALPHA,
 			Buckets:        []float64{0.005, 0.025, 0.05, 0.1, 0.2, 0.4, 0.6, 0.8, 1.0, 1.25, 1.5, 2, 3},
 		}, []string{"resource"})
+
+	WatchDispatchEventNumWatchers = compbasemetrics.NewHistogramVec(
+		&compbasemetrics.HistogramOpts{
+			Namespace:      namespace,
+			Subsystem:      subsystem,
+			Name:           "watch_dispatch_event_num_watchers",
+			Help:           "Histogram of total number of watchers to dispatch event to.",
+			Buckets:        []float64{1, 2, 3, 4, 6, 8, 10, 15, 20, 30, 40, 50, 100, 200, 300, 500, 800, 1000, 2000, 3000},
+			StabilityLevel: compbasemetrics.ALPHA,
+		},
+		[]string{"resource"},
+	)
+
+	WatcherCountGauge = compbasemetrics.NewGaugeVec(
+		&compbasemetrics.GaugeOpts{
+			Namespace:      namespace,
+			Subsystem:      subsystem,
+			Name:           "watcher_counter",
+			Help:           "Counter of the inflight cacher watchers.",
+			StabilityLevel: compbasemetrics.ALPHA,
+		},
+		[]string{"resource", "index"},
+	)
 )
 
 var registerMetrics sync.Once
@@ -188,6 +211,8 @@ func Register() {
 		legacyregistry.MustRegister(WatchCacheCapacity)
 		legacyregistry.MustRegister(WatchCacheInitializations)
 		legacyregistry.MustRegister(WatchCacheReadWait)
+		legacyregistry.MustRegister(WatchDispatchEventNumWatchers)
+		legacyregistry.MustRegister(WatcherCountGauge)
 	})
 }
 
