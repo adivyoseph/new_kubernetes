@@ -785,13 +785,14 @@ func TestSchedulerScheduleOne(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			informerFactory := informers.NewSharedInformerFactory(client, 0)
 			sched := &Scheduler{
 				Cache:  cache,
 				client: client,
 				NextPod: func(logger klog.Logger) (*framework.QueuedPodInfo, error) {
 					return &framework.QueuedPodInfo{PodInfo: mustNewPodInfo(t, item.sendPod)}, nil
 				},
-				SchedulingQueue: internalqueue.NewTestQueue(ctx, nil),
+				SchedulingQueue: internalqueue.NewSchedulingQueue(nil, informerFactory),
 				Profiles:        profile.Map{testSchedulerName: fwk},
 			}
 
@@ -2483,7 +2484,7 @@ func TestSchedulerSchedulePod(t *testing.T) {
 				test.registerPlugins, "",
 				frameworkruntime.WithSnapshotSharedLister(snapshot),
 				frameworkruntime.WithInformerFactory(informerFactory),
-				frameworkruntime.WithPodNominator(internalqueue.NewTestPodNominator(informerFactory.Core().V1().Pods().Lister())),
+				frameworkruntime.WithPodNominator(internalqueue.NewSchedulingQueue(nil, informerFactory)),
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -2546,7 +2547,7 @@ func TestFindFitAllError(t *testing.T) {
 			tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
 		},
 		"",
-		frameworkruntime.WithPodNominator(internalqueue.NewTestPodNominator(nil)),
+		frameworkruntime.WithPodNominator(internalqueue.NewTestQueue(ctx, nil)),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -2586,7 +2587,7 @@ func TestFindFitSomeError(t *testing.T) {
 			tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
 		},
 		"",
-		frameworkruntime.WithPodNominator(internalqueue.NewTestPodNominator(nil)),
+		frameworkruntime.WithPodNominator(internalqueue.NewTestQueue(ctx, nil)),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -2660,10 +2661,18 @@ func TestFindFitPredicateCallCounts(t *testing.T) {
 			logger, ctx := ktesting.NewTestContext(t)
 			ctx, cancel := context.WithCancel(ctx)
 			defer cancel()
+
+			informerFactory := informers.NewSharedInformerFactory(clientsetfake.NewClientset(), 0)
+			podInformer := informerFactory.Core().V1().Pods().Informer()
+			err := podInformer.GetStore().Add(test.pod)
+			if err != nil {
+				t.Fatalf("Error adding pod to podInformer: %s", err)
+			}
+
 			fwk, err := tf.NewFramework(
 				ctx,
 				registerPlugins, "",
-				frameworkruntime.WithPodNominator(internalqueue.NewTestPodNominator(nil)),
+				frameworkruntime.WithPodNominator(internalqueue.NewSchedulingQueue(nil, informerFactory)),
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -2676,6 +2685,10 @@ func TestFindFitPredicateCallCounts(t *testing.T) {
 			podinfo, err := framework.NewPodInfo(st.MakePod().UID("nominated").Priority(midPriority).Obj())
 			if err != nil {
 				t.Fatal(err)
+			}
+			err = podInformer.GetStore().Add(podinfo.Pod)
+			if err != nil {
+				t.Fatalf("Error adding nominated pod to podInformer: %s", err)
 			}
 			fwk.AddNominatedPod(logger, podinfo, &framework.NominatingInfo{NominatingMode: framework.ModeOverride, NominatedNodeName: "1"})
 
@@ -2804,7 +2817,7 @@ func TestZeroRequest(t *testing.T) {
 				frameworkruntime.WithInformerFactory(informerFactory),
 				frameworkruntime.WithSnapshotSharedLister(snapshot),
 				frameworkruntime.WithClientSet(client),
-				frameworkruntime.WithPodNominator(internalqueue.NewTestPodNominator(informerFactory.Core().V1().Pods().Lister())),
+				frameworkruntime.WithPodNominator(internalqueue.NewSchedulingQueue(nil, informerFactory)),
 			)
 			if err != nil {
 				t.Fatalf("error creating framework: %+v", err)
@@ -3207,7 +3220,7 @@ func Test_prioritizeNodes(t *testing.T) {
 				frameworkruntime.WithInformerFactory(informerFactory),
 				frameworkruntime.WithSnapshotSharedLister(snapshot),
 				frameworkruntime.WithClientSet(client),
-				frameworkruntime.WithPodNominator(internalqueue.NewTestPodNominator(informerFactory.Core().V1().Pods().Lister())),
+				frameworkruntime.WithPodNominator(internalqueue.NewSchedulingQueue(nil, informerFactory)),
 			)
 			if err != nil {
 				t.Fatalf("error creating framework: %+v", err)
@@ -3325,7 +3338,7 @@ func TestFairEvaluationForNodes(t *testing.T) {
 			tf.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
 		},
 		"",
-		frameworkruntime.WithPodNominator(internalqueue.NewTestPodNominator(nil)),
+		frameworkruntime.WithPodNominator(internalqueue.NewTestQueue(ctx, nil)),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -3407,7 +3420,7 @@ func TestPreferNominatedNodeFilterCallCounts(t *testing.T) {
 				ctx,
 				registerPlugins, "",
 				frameworkruntime.WithClientSet(client),
-				frameworkruntime.WithPodNominator(internalqueue.NewTestPodNominator(informerFactory.Core().V1().Pods().Lister())),
+				frameworkruntime.WithPodNominator(internalqueue.NewSchedulingQueue(nil, informerFactory)),
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -3565,7 +3578,7 @@ func setupTestScheduler(ctx context.Context, t *testing.T, queuedPodStore *clien
 		frameworkruntime.WithClientSet(client),
 		frameworkruntime.WithEventRecorder(recorder),
 		frameworkruntime.WithInformerFactory(informerFactory),
-		frameworkruntime.WithPodNominator(internalqueue.NewTestPodNominator(informerFactory.Core().V1().Pods().Lister())),
+		frameworkruntime.WithPodNominator(schedulingQueue),
 		frameworkruntime.WithWaitingPods(waitingPods),
 	)
 
