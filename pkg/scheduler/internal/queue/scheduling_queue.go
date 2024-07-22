@@ -1373,8 +1373,8 @@ func (p *PriorityQueue) PendingPods() ([]*v1.Pod, string) {
 }
 
 // Note: this function assumes the caller locks p.lock.RLock.
-func (p *PriorityQueue) nominatedPodToInfo(np PodRef) *framework.PodInfo {
-	pod := np.ToPod()
+func (p *PriorityQueue) nominatedPodToInfo(np podRef) *framework.PodInfo {
+	pod := np.toPod()
 	pInfoLookup := newQueuedPodInfoForLookup(pod)
 
 	obj, exists, _ := p.activeQ.Get(pInfoLookup)
