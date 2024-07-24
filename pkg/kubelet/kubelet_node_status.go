@@ -93,8 +93,15 @@ func (kl *Kubelet) tryRegisterWithAPIServer(node *v1.Node) bool {
 		return true
 	}
 
-	continueOnForbidden := !utilfeature.DefaultFeatureGate.Enabled(features.DisableKubeletRegisterGetOnForbidden)
-	if !(apierrors.IsAlreadyExists(err) || apierrors.IsForbidden(err) && continueOnForbidden) {
+	switch {
+	case apierrors.IsAlreadyExists(err):
+		// Node already exists, proceed to reconcile node.
+	case apierrors.IsForbidden(err):
+		// Creating nodes is forbidden, but node may still exist, attempt to get the node.
+		if utilfeature.DefaultFeatureGate.Enabled(features.DisableKubeletRegisterGetOnForbidden) {
+			return false
+		}
+	default:
 		klog.ErrorS(err, "Unable to register node with API server", "node", klog.KObj(node))
 		return false
 	}
