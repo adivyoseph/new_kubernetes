@@ -2821,6 +2821,174 @@ func TestCRDsOnStartup(t *testing.T) {
 
 }
 
+func TestAuthorizationDecisionCaching(t *testing.T) {
+	generic.PolicyRefreshInterval = 10 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
+	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, genericfeatures.ValidatingAdmissionPolicy, true)
+	var nChecks int
+	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var review authorizationv1.SubjectAccessReview
+		if err := json.NewDecoder(r.Body).Decode(&review); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		}
+
+		review.Status.Allowed = true
+		if review.Spec.ResourceAttributes.Verb == "test" {
+			nChecks++
+			review.Status.Reason = fmt.Sprintf("%d", nChecks)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(review); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}))
+	defer webhook.Close()
+	kcfd, err := os.CreateTemp("", "kubeconfig-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	func() {
+		defer kcfd.Close()
+		tmpl, err := template.New("kubeconfig").Parse(`
+apiVersion: v1
+kind: Config
+clusters:
+  - name: test-authz-service
+    cluster:
+      server: {{ .Server }}
+users:
+  - name: test-api-server
+current-context: webhook
+contexts:
+- context:
+    cluster: test-authz-service
+    user: test-api-server
+  name: webhook
+`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = tmpl.Execute(kcfd, struct {
+			Server string
+		}{
+			Server: webhook.URL,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
+	client, config, teardown := framework.StartTestServer(ctx, t, framework.TestServerSetup{
+		ModifyServerRunOptions: func(options *options.ServerRunOptions) {
+			options.Admission.GenericAdmission.EnablePlugins = append(options.Admission.GenericAdmission.EnablePlugins, "ValidatingAdmissionPolicy")
+			options.APIEnablement.RuntimeConfig.Set("api/all=true")
+
+			options.Authorization.Modes = []string{authzmodes.ModeWebhook}
+			options.Authorization.WebhookConfigFile = kcfd.Name()
+			options.Authorization.WebhookVersion = "v1"
+			// Bypass webhook cache to observe the policy plugin's cache behavior.
+			options.Authorization.WebhookCacheAuthorizedTTL = 0
+			options.Authorization.WebhookCacheUnauthorizedTTL = 0
+		},
+	})
+	defer teardown()
+
+	config = rest.CopyConfig(config)
+	config.Impersonate = rest.ImpersonationConfig{
+		UserName: "alice",
+		UID:      "1234",
+	}
+	client, err = clientset.NewForConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i, tc := range []struct {
+		name        string
+		validations []admissionregistrationv1.Validation
+	}{
+		{
+			name: "hit",
+			validations: []admissionregistrationv1.Validation{
+				{
+					Expression: "authorizer.requestResource.check('test').reason() == authorizer.requestResource.check('test').reason()",
+				},
+			},
+		},
+		{
+			name: "miss",
+			validations: []admissionregistrationv1.Validation{
+				{
+					Expression: "authorizer.requestResource.subresource('a').check('test').reason() == '1'",
+				},
+				{
+					Expression: "authorizer.requestResource.subresource('b').check('test').reason() == '2'",
+				},
+				{
+					Expression: "authorizer.requestResource.subresource('c').check('test').reason() == '3'",
+				},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			policy := &admissionregistrationv1.ValidatingAdmissionPolicy{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-authorization-decision-caching-policy",
+				},
+				Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
+					MatchConstraints: &admissionregistrationv1.MatchResources{
+						ResourceRules: []admissionregistrationv1.NamedRuleWithOperations{
+							{
+								ResourceNames: []string{"test-authorization-decision-caching-namespace"},
+								RuleWithOperations: admissionregistrationv1.RuleWithOperations{
+									Operations: []admissionregistrationv1.OperationType{
+										admissionregistrationv1.Create,
+									},
+									Rule: admissionregistrationv1.Rule{
+										APIGroups:   []string{""},
+										APIVersions: []string{"v1"},
+										Resources:   []string{"namespaces"},
+									},
+								},
+							},
+						},
+					},
+					Validations: tc.validations,
+				},
+			}
+
+			policy, err = client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Create(ctx, withWaitReadyConstraintAndExpression(policy), metav1.CreateOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			policyBinding := makeBinding(policy.Name+"-binding", policy.Name, "")
+			if err := createAndWaitReady(t, client, policyBinding, nil); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := client.CoreV1().Namespaces().Create(
+				ctx,
+				&v1.Namespace{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: fmt.Sprintf("test-authorization-decision-caching-namespace-%d", i),
+					},
+				},
+				metav1.CreateOptions{},
+			); err != nil {
+				if !apierrors.IsAlreadyExists(err) {
+					t.Fatal(err)
+				}
+			}
+
+			if err := cleanupPolicy(t, client, policy, policyBinding); err != nil {
+				t.Errorf("error while cleaning up policy and its bindings: %v", err)
+			}
+		})
+	}
+}
+
 type clientFn func(t *testing.T, adminClient *clientset.Clientset, clientConfig *rest.Config, rules []rbacv1.PolicyRule) *clientset.Clientset
 
 func secondaryAuthorizationUserClient(t *testing.T, adminClient *clientset.Clientset, clientConfig *rest.Config, rules []rbacv1.PolicyRule) *clientset.Clientset {
@@ -3382,167 +3550,3 @@ rules:
         resources: ["configmaps"]
 `
 )
-
-func TestAuthorizationDecisionCaching(t *testing.T) {
-	for _, tc := range []struct {
-		name        string
-		validations []admissionregistrationv1.Validation
-	}{
-		{
-			name: "hit",
-			validations: []admissionregistrationv1.Validation{
-				{
-					Expression: "authorizer.requestResource.check('test').reason() == authorizer.requestResource.check('test').reason()",
-				},
-			},
-		},
-		{
-			name: "miss",
-			validations: []admissionregistrationv1.Validation{
-				{
-					Expression: "authorizer.requestResource.subresource('a').check('test').reason() == '1'",
-				},
-				{
-					Expression: "authorizer.requestResource.subresource('b').check('test').reason() == '2'",
-				},
-				{
-					Expression: "authorizer.requestResource.subresource('c').check('test').reason() == '3'",
-				},
-			},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, genericfeatures.ValidatingAdmissionPolicy, true)
-
-			ctx, cancel := context.WithCancel(context.TODO())
-			defer cancel()
-
-			var nChecks int
-			webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var review authorizationv1.SubjectAccessReview
-				if err := json.NewDecoder(r.Body).Decode(&review); err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-				}
-
-				review.Status.Allowed = true
-				if review.Spec.ResourceAttributes.Verb == "test" {
-					nChecks++
-					review.Status.Reason = fmt.Sprintf("%d", nChecks)
-				}
-
-				w.Header().Set("Content-Type", "application/json")
-				if err := json.NewEncoder(w).Encode(review); err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-				}
-			}))
-			defer webhook.Close()
-
-			kcfd, err := os.CreateTemp("", "kubeconfig-")
-			if err != nil {
-				t.Fatal(err)
-			}
-			func() {
-				defer kcfd.Close()
-				tmpl, err := template.New("kubeconfig").Parse(`
-apiVersion: v1
-kind: Config
-clusters:
-  - name: test-authz-service
-    cluster:
-      server: {{ .Server }}
-users:
-  - name: test-api-server
-current-context: webhook
-contexts:
-- context:
-    cluster: test-authz-service
-    user: test-api-server
-  name: webhook
-`)
-				if err != nil {
-					t.Fatal(err)
-				}
-				err = tmpl.Execute(kcfd, struct {
-					Server string
-				}{
-					Server: webhook.URL,
-				})
-				if err != nil {
-					t.Fatal(err)
-				}
-			}()
-
-			client, config, teardown := framework.StartTestServer(ctx, t, framework.TestServerSetup{
-				ModifyServerRunOptions: func(options *options.ServerRunOptions) {
-					options.Admission.GenericAdmission.EnablePlugins = append(options.Admission.GenericAdmission.EnablePlugins, "ValidatingAdmissionPolicy")
-					options.APIEnablement.RuntimeConfig.Set("api/all=true")
-
-					options.Authorization.Modes = []string{authzmodes.ModeWebhook}
-					options.Authorization.WebhookConfigFile = kcfd.Name()
-					options.Authorization.WebhookVersion = "v1"
-					// Bypass webhook cache to observe the policy plugin's cache behavior.
-					options.Authorization.WebhookCacheAuthorizedTTL = 0
-					options.Authorization.WebhookCacheUnauthorizedTTL = 0
-				},
-			})
-			defer teardown()
-
-			policy := &admissionregistrationv1.ValidatingAdmissionPolicy{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-authorization-decision-caching-policy",
-				},
-				Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
-					MatchConstraints: &admissionregistrationv1.MatchResources{
-						ResourceRules: []admissionregistrationv1.NamedRuleWithOperations{
-							{
-								ResourceNames: []string{"test-authorization-decision-caching-namespace"},
-								RuleWithOperations: admissionregistrationv1.RuleWithOperations{
-									Operations: []admissionregistrationv1.OperationType{
-										admissionregistrationv1.Create,
-									},
-									Rule: admissionregistrationv1.Rule{
-										APIGroups:   []string{""},
-										APIVersions: []string{"v1"},
-										Resources:   []string{"namespaces"},
-									},
-								},
-							},
-						},
-					},
-					Validations: tc.validations,
-				},
-			}
-
-			policy, err = client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Create(ctx, withWaitReadyConstraintAndExpression(policy), metav1.CreateOptions{})
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			if err := createAndWaitReady(t, client, makeBinding(policy.Name+"-binding", policy.Name, ""), nil); err != nil {
-				t.Fatal(err)
-			}
-
-			config = rest.CopyConfig(config)
-			config.Impersonate = rest.ImpersonationConfig{
-				UserName: "alice",
-				UID:      "1234",
-			}
-			client, err = clientset.NewForConfig(config)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			if _, err := client.CoreV1().Namespaces().Create(
-				ctx,
-				&v1.Namespace{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-authorization-decision-caching-namespace",
-					},
-				},
-				metav1.CreateOptions{},
-			); err != nil {
-				t.Fatal(err)
-			}
-		})
-	}
-}
