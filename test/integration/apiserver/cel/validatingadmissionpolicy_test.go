@@ -67,10 +67,14 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 )
 
+// Short term fix to refresh the policy source cache faster for tests
+// until we reduce the polling interval by default.
+const policyRefreshInterval = 10 * time.Millisecond
+
 // Test_ValidateNamespace_NoParams_Success tests a ValidatingAdmissionPolicy that validates creation of a Namespace
 // with no params via happy path.
 func Test_ValidateNamespace_NoParams_Success(t *testing.T) {
-	generic.PolicyRefreshInterval = 10 * time.Millisecond
+	generic.PolicyRefreshInterval = policyRefreshInterval
 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, genericfeatures.ValidatingAdmissionPolicy, true)
 	server, err := apiservertesting.StartTestServer(t, nil, []string{
 		"--enable-admission-plugins", "ValidatingAdmissionPolicy",
@@ -184,7 +188,7 @@ func Test_ValidateNamespace_NoParams_Success(t *testing.T) {
 
 // Test_ValidateNamespace_NoParams_Failures tests a ValidatingAdmissionPolicy that fails creation of a Namespace with no params.
 func Test_ValidateNamespace_NoParams_Failures(t *testing.T) {
-	generic.PolicyRefreshInterval = 10 * time.Millisecond
+	generic.PolicyRefreshInterval = policyRefreshInterval
 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, genericfeatures.ValidatingAdmissionPolicy, true)
 	server, err := apiservertesting.StartTestServer(t, nil, []string{
 		"--enable-admission-plugins", "ValidatingAdmissionPolicy",
@@ -516,7 +520,7 @@ func Test_ValidateAnnotationsAndWarnings(t *testing.T) {
 // Test_ValidateNamespace_WithConfigMapParams tests a ValidatingAdmissionPolicy that validates creation of a Namespace,
 // using ConfigMap as a param reference.
 func Test_ValidateNamespace_WithConfigMapParams(t *testing.T) {
-	generic.PolicyRefreshInterval = 10 * time.Millisecond
+	generic.PolicyRefreshInterval = policyRefreshInterval
 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, genericfeatures.ValidatingAdmissionPolicy, true)
 	server, err := apiservertesting.StartTestServer(t, nil, []string{
 		"--enable-admission-plugins", "ValidatingAdmissionPolicy",
@@ -2135,7 +2139,7 @@ func Test_ValidatingAdmissionPolicy_ParamResourceDeletedThenRecreated(t *testing
 // Test_CostLimitForValidation tests the cost limit set for a ValidatingAdmissionPolicy
 // with StrictCostEnforcementForVAP feature enabled.
 func Test_CostLimitForValidation(t *testing.T) {
-	generic.PolicyRefreshInterval = 10 * time.Millisecond
+	generic.PolicyRefreshInterval = policyRefreshInterval
 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, genericfeatures.StrictCostEnforcementForVAP, true)
 	server, err := apiservertesting.StartTestServer(t, nil, []string{
 		"--enable-admission-plugins", "ValidatingAdmissionPolicy",
@@ -2244,7 +2248,7 @@ func Test_CostLimitForValidation(t *testing.T) {
 // Test_CostLimitForValidationWithFeatureDisabled tests the cost limit set for a ValidatingAdmissionPolicy
 // with StrictCostEnforcementForVAP feature disabled.
 func Test_CostLimitForValidationWithFeatureDisabled(t *testing.T) {
-	generic.PolicyRefreshInterval = 10 * time.Millisecond
+	generic.PolicyRefreshInterval = policyRefreshInterval
 	server, err := apiservertesting.StartTestServer(t, nil, []string{
 		"--enable-admission-plugins", "ValidatingAdmissionPolicy",
 	}, framework.SharedEtcd())
@@ -2341,7 +2345,7 @@ func generateValidationsWithAuthzCheck(num int, exp string) []admissionregistrat
 
 // TestCRDParams tests that a CustomResource can be used as a param resource for a ValidatingAdmissionPolicy.
 func TestCRDParams(t *testing.T) {
-	generic.PolicyRefreshInterval = 10 * time.Millisecond
+	generic.PolicyRefreshInterval = policyRefreshInterval
 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, genericfeatures.ValidatingAdmissionPolicy, true)
 	server, err := apiservertesting.StartTestServer(t, nil, []string{
 		"--enable-admission-plugins", "ValidatingAdmissionPolicy",
@@ -2543,7 +2547,7 @@ func TestBindingRemoval(t *testing.T) {
 // Test_ValidateSecondaryAuthorization tests a ValidatingAdmissionPolicy that performs secondary authorization checks
 // for both users and service accounts.
 func Test_ValidateSecondaryAuthorization(t *testing.T) {
-	generic.PolicyRefreshInterval = 10 * time.Millisecond
+	generic.PolicyRefreshInterval = policyRefreshInterval
 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, genericfeatures.ValidatingAdmissionPolicy, true)
 	server, err := apiservertesting.StartTestServer(t, nil, []string{
 		"--enable-admission-plugins", "ValidatingAdmissionPolicy",
@@ -2822,7 +2826,7 @@ func TestCRDsOnStartup(t *testing.T) {
 }
 
 func TestAuthorizationDecisionCaching(t *testing.T) {
-	generic.PolicyRefreshInterval = 10 * time.Millisecond
+	generic.PolicyRefreshInterval = policyRefreshInterval
 	ctx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, genericfeatures.ValidatingAdmissionPolicy, true)
@@ -2850,7 +2854,11 @@ func TestAuthorizationDecisionCaching(t *testing.T) {
 		t.Fatal(err)
 	}
 	func() {
-		defer kcfd.Close()
+		defer func() {
+			if err := kcfd.Close(); err != nil {
+				t.Fatal(err)
+			}
+		}()
 		tmpl, err := template.New("kubeconfig").Parse(`
 apiVersion: v1
 kind: Config
@@ -2879,10 +2887,12 @@ contexts:
 			t.Fatal(err)
 		}
 	}()
-	client, config, teardown := framework.StartTestServer(ctx, t, framework.TestServerSetup{
+	_, config, teardown := framework.StartTestServer(ctx, t, framework.TestServerSetup{
 		ModifyServerRunOptions: func(options *options.ServerRunOptions) {
 			options.Admission.GenericAdmission.EnablePlugins = append(options.Admission.GenericAdmission.EnablePlugins, "ValidatingAdmissionPolicy")
-			options.APIEnablement.RuntimeConfig.Set("api/all=true")
+			if err = options.APIEnablement.RuntimeConfig.Set("api/all=true"); err != nil {
+				t.Fatal(err)
+			}
 
 			options.Authorization.Modes = []string{authzmodes.ModeWebhook}
 			options.Authorization.WebhookConfigFile = kcfd.Name()
@@ -2899,7 +2909,7 @@ contexts:
 		UserName: "alice",
 		UID:      "1234",
 	}
-	client, err = clientset.NewForConfig(config)
+	client, err := clientset.NewForConfig(config)
 	if err != nil {
 		t.Fatal(err)
 	}

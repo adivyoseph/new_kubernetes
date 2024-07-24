@@ -42,6 +42,9 @@ import (
 )
 
 var (
+	// Interval for refreshing policies. Exported for test purposes.
+	// TODO: Consider reducing this to a shorter duration or replacing this entirely
+	// with checks that detect when a policy change took effect.
 	PolicyRefreshInterval = 1 * time.Second
 )
 
