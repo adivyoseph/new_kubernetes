@@ -324,6 +324,12 @@ const (
 	// the 'nominalConcurrencyShares' field of the 'limited' section of a
 	// priority level.
 	ZeroLimitedNominalConcurrencyShares featuregate.Feature = "ZeroLimitedNominalConcurrencyShares"
+
+	// owner: @chenchun
+	// alpha: v1.32
+	//
+	// Add additional label indexes to cacher
+	CacherLabelIndex featuregate.Feature = "CacherLabelIndex"
 )
 
 func init() {
@@ -417,4 +423,6 @@ var defaultKubernetesFeatureGates = map[featuregate.Feature]featuregate.FeatureS
 	ConsistentListFromCache: {Default: false, PreRelease: featuregate.Alpha},
 
 	ZeroLimitedNominalConcurrencyShares: {Default: true, PreRelease: featuregate.GA, LockToDefault: true}, // remove in 1.32
+
+	CacherLabelIndex: {Default: false, PreRelease: featuregate.Alpha},
 }
