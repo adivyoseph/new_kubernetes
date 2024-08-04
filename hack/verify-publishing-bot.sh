@@ -27,6 +27,6 @@ source "${KUBE_ROOT}/hack/lib/init.sh"
 
 kube::golang::setup_env
 
-cd "${KUBE_ROOT}/hack/tools"
+go -C "${KUBE_ROOT}/hack/tools" install ./publishing-verifier
 
-go run publishing-bot/main.go "${KUBE_ROOT}"
+publishing-verifier "${KUBE_ROOT}"

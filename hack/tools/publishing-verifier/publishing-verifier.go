@@ -29,7 +29,6 @@ import (
 var (
 	rulesFile           string
 	componentsDirectory string
-	stagingDirectory    string
 )
 
 // getGoModDependencies gets all the staging dependencies for all the modules
@@ -118,6 +117,8 @@ func checkValidSourceDirectory(rule config.RepositoryRule) error {
 	return nil
 }
 
+// checkMasterBranch checks if the master branch of destination repository refers to the master
+// of the source
 func checkMasterBranch(rule config.RepositoryRule) error {
 	branch := rule.Branches[0]
 	if branch.Name != "master" {
@@ -229,7 +230,7 @@ func main() {
 	}
 
 	kubeRoot := os.Args[1]
-	stagingDirectory = kubeRoot + "/staging/"
+	stagingDirectory := kubeRoot + "/staging/"
 	rulesFile = stagingDirectory + "publishing/rules.yaml"
 	componentsDirectory = stagingDirectory + "src/k8s.io/"
 
