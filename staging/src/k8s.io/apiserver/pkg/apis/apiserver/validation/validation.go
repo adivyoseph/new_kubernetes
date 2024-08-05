@@ -347,6 +347,15 @@ func validateClaimMappings(compiler authenticationcel.Compiler, state *validatio
 		if mapping.Key != strings.ToLower(mapping.Key) {
 			allErrs = append(allErrs, field.Invalid(fldPath.Child("key"), mapping.Key, "key must be lowercase"))
 		}
+
+		if parts := strings.SplitN(mapping.Key, "/", 2); len(parts) == 2 {
+			domainPrefix := strings.ToLower(parts[0])
+			if domainPrefix == "k8s.io" || strings.HasSuffix(domainPrefix, ".k8s.io") ||
+				domainPrefix == "kubernetes.io" || strings.HasSuffix(domainPrefix, ".kubernetes.io") {
+				allErrs = append(allErrs, field.Invalid(fldPath.Child("key"), mapping.Key, "k8s.io, kubernetes.io and their subdomains are reserved for Kubernetes use"))
+			}
+		}
+
 		if seenExtraKeys.Has(mapping.Key) {
 			allErrs = append(allErrs, field.Duplicate(fldPath.Child("key"), mapping.Key))
 			continue
