@@ -233,6 +233,13 @@ const (
 	// Remove in v1.33
 	AllowInsecureKubeletCertificateSigningRequests featuregate.Feature = "AllowInsecureKubeletCertificateSigningRequests"
 
+	// owner: @hoskeri
+	// Deprecated: v1.31
+	//
+	// Disable the change to proceed with node self-registration when Node create returns Forbidden
+	// Remove in v1.33
+	DisableKubeletRegisterGetOnForbidden featuregate.Feature = "DisableKubeletRegisterGetOnForbidden"
+
 	// owner: @HirazawaUi
 	// kep: http://kep.k8s.io/4004
 	// alpha: v1.29
@@ -1330,6 +1337,8 @@ var defaultKubernetesFeatureGates = map[featuregate.Feature]featuregate.FeatureS
 	HPAScaleToZero: {Default: false, PreRelease: featuregate.Alpha},
 
 	AllowInsecureKubeletCertificateSigningRequests: {Default: false, PreRelease: featuregate.Deprecated}, // remove in 1.33
+
+	DisableKubeletRegisterGetOnForbidden: {Default: false, PreRelease: featuregate.Deprecated}, // remove in 1.33
 
 	StorageNamespaceIndex: {Default: true, PreRelease: featuregate.Beta},
 
