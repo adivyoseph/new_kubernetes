@@ -1084,7 +1084,8 @@ func (m *kubeGenericRuntimeManager) computeInitContainerActions(pod *v1.Pod, pod
 
 		switch status.State {
 		case kubecontainer.ContainerStateCreated:
-			// nothing to do but wait for it to start
+			// restart the container if it is stuck in the created state
+			changes.InitContainersToStart = append(changes.InitContainersToStart, i)
 
 		case kubecontainer.ContainerStateRunning:
 			if !types.IsRestartableInitContainer(container) {
