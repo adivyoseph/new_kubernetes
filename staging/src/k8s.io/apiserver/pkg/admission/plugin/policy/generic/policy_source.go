@@ -41,6 +41,13 @@ import (
 	"k8s.io/klog/v2"
 )
 
+var (
+	// Interval for refreshing policies. Exported for test purposes.
+	// TODO: Consider reducing this to a shorter duration or replacing this entirely
+	// with checks that detect when a policy change took effect.
+	PolicyRefreshInterval = 1 * time.Second
+)
+
 type policySource[P runtime.Object, B runtime.Object, E Evaluator] struct {
 	ctx                context.Context
 	policyInformer     generic.Informer[P]
@@ -178,7 +185,7 @@ func (s *policySource[P, B, E]) Run(ctx context.Context) error {
 	// and needs to be recompiled
 	go func() {
 		// Loop every 1 second until context is cancelled, refreshing policies
-		wait.Until(s.refreshPolicies, 1*time.Second, ctx.Done())
+		wait.Until(s.refreshPolicies, PolicyRefreshInterval, ctx.Done())
 	}()
 
 	<-ctx.Done()
