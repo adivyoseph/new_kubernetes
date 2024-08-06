@@ -493,6 +493,7 @@ func AddHandlers(h printers.PrintHandler) {
 		{Name: "Name", Type: "string", Format: "name", Description: metav1.ObjectMeta{}.SwaggerDoc()["name"]},
 		{Name: "Value", Type: "integer", Description: schedulingv1.PriorityClass{}.SwaggerDoc()["value"]},
 		{Name: "Global-Default", Type: "boolean", Description: schedulingv1.PriorityClass{}.SwaggerDoc()["globalDefault"]},
+		{Name: "PreemptionPolicy", Type: "string", Description: schedulingv1.PriorityClass{}.SwaggerDoc()["preemptionPolicy"]},
 		{Name: "Age", Type: "string", Description: metav1.ObjectMeta{}.SwaggerDoc()["creationTimestamp"]},
 	}
 	_ = h.TableHandler(priorityClassColumnDefinitions, printPriorityClass)
@@ -2746,7 +2747,11 @@ func printPriorityClass(obj *scheduling.PriorityClass, options printers.Generate
 	name := obj.Name
 	value := obj.Value
 	globalDefault := obj.GlobalDefault
-	row.Cells = append(row.Cells, name, int64(value), globalDefault, translateTimestampSince(obj.CreationTimestamp))
+	var preemptionPolicy string
+	if obj.PreemptionPolicy != nil {
+		preemptionPolicy = string(*obj.PreemptionPolicy)
+	}
+	row.Cells = append(row.Cells, name, int64(value), globalDefault, preemptionPolicy, translateTimestampSince(obj.CreationTimestamp))
 
 	return []metav1.TableRow{row}, nil
 }

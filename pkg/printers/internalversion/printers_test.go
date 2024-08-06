@@ -5757,6 +5757,8 @@ func TestPrintLease(t *testing.T) {
 }
 
 func TestPrintPriorityClass(t *testing.T) {
+	preemptNever := api.PreemptNever
+	preemptLowerPriority := api.PreemptLowerPriority
 	tests := []struct {
 		pc       scheduling.PriorityClass
 		expected []metav1.TableRow
@@ -5767,9 +5769,10 @@ func TestPrintPriorityClass(t *testing.T) {
 					Name:              "pc1",
 					CreationTimestamp: metav1.Time{Time: time.Now().Add(1.9e9)},
 				},
-				Value: 1,
+				Value:            1,
+				PreemptionPolicy: &preemptNever,
 			},
-			expected: []metav1.TableRow{{Cells: []interface{}{"pc1", int64(1), bool(false), "0s"}}},
+			expected: []metav1.TableRow{{Cells: []interface{}{"pc1", int64(1), bool(false), string("Never"), "0s"}}},
 		},
 		{
 			pc: scheduling.PriorityClass{
@@ -5777,10 +5780,11 @@ func TestPrintPriorityClass(t *testing.T) {
 					Name:              "pc2",
 					CreationTimestamp: metav1.Time{Time: time.Now().Add(-3e11)},
 				},
-				Value:         1000000000,
-				GlobalDefault: true,
+				Value:            1000000000,
+				GlobalDefault:    true,
+				PreemptionPolicy: &preemptLowerPriority,
 			},
-			expected: []metav1.TableRow{{Cells: []interface{}{"pc2", int64(1000000000), bool(true), "5m"}}},
+			expected: []metav1.TableRow{{Cells: []interface{}{"pc2", int64(1000000000), bool(true), string("PreemptLowerPriority"), "5m"}}},
 		},
 	}
 
