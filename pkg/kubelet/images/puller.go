@@ -18,6 +18,8 @@ package images
 
 import (
 	"context"
+	"strings"
+	"sync"
 	"time"
 
 	v1 "k8s.io/api/core/v1"
@@ -40,22 +42,35 @@ type imagePuller interface {
 var _, _ imagePuller = &parallelImagePuller{}, &serialImagePuller{}
 
 type parallelImagePuller struct {
-	imageService kubecontainer.ImageService
-	tokens       chan struct{}
+	imageService    kubecontainer.ImageService
+	tokens          chan struct{}
+	pullingImageSet sync.Map
 }
 
 func newParallelImagePuller(imageService kubecontainer.ImageService, maxParallelImagePulls *int32) imagePuller {
 	if maxParallelImagePulls == nil || *maxParallelImagePulls < 1 {
-		return &parallelImagePuller{imageService, nil}
+		return &parallelImagePuller{imageService, nil, sync.Map{}}
 	}
-	return &parallelImagePuller{imageService, make(chan struct{}, *maxParallelImagePulls)}
+	return &parallelImagePuller{imageService, make(chan struct{}, *maxParallelImagePulls), sync.Map{}}
+}
+
+func genKeyByImageSpec(spec kubecontainer.ImageSpec) string {
+	args := []string{spec.Image}
+	if spec.RuntimeHandler != "" {
+		args = append(args, spec.RuntimeHandler)
+	}
+	return strings.Join(args, "-")
 }
 
 func (pip *parallelImagePuller) pullImage(ctx context.Context, spec kubecontainer.ImageSpec, pullSecrets []v1.Secret, pullChan chan<- pullResult, podSandboxConfig *runtimeapi.PodSandboxConfig) {
 	go func() {
-		if pip.tokens != nil {
+		imageParallelKey := genKeyByImageSpec(spec)
+		if _, loaded := pip.pullingImageSet.LoadOrStore(imageParallelKey, struct{}{}); pip.tokens != nil && !loaded {
 			pip.tokens <- struct{}{}
-			defer func() { <-pip.tokens }()
+			defer func() {
+				pip.pullingImageSet.Delete(imageParallelKey)
+				<-pip.tokens
+			}()
 		}
 		startTime := time.Now()
 		imageRef, err := pip.imageService.PullImage(ctx, spec, pullSecrets, podSandboxConfig)
