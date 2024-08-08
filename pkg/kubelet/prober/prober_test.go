@@ -29,9 +29,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	containertest "k8s.io/kubernetes/pkg/kubelet/container/testing"
-	"k8s.io/kubernetes/pkg/kubelet/events"
 	"k8s.io/kubernetes/pkg/kubelet/prober/results"
 	"k8s.io/kubernetes/pkg/kubelet/util/ioutils"
 	"k8s.io/kubernetes/pkg/probe"
@@ -391,6 +391,10 @@ func TestExecInContainer_Start(t *testing.T) {
 
 func TestRecordContainerEventUnknownStatus(t *testing.T) {
 
+	if err := v1.AddToScheme(legacyscheme.Scheme); err != nil {
+		t.Errorf("failed to add v1 to scheme: %v", err)
+	}
+
 	pod := &v1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			UID: "test-probe-pod",
@@ -406,6 +410,7 @@ func TestRecordContainerEventUnknownStatus(t *testing.T) {
 
 	container := pod.Spec.Containers[0]
 	recorder := record.NewFakeRecorder(10)
+
 	pb := &prober{
 		recorder: recorder,
 	}
@@ -415,28 +420,37 @@ func TestRecordContainerEventUnknownStatus(t *testing.T) {
 	testCases := []struct {
 		probeType probeType
 		result    probe.Result
-		expected  string
+		expected  []string
 	}{
 		{
 			probeType: readiness,
 			result:    probe.Unknown,
-			expected:  "Unknown Readiness probe status: Unknown",
+			expected: []string{
+				"Warning ContainerProbeWarning Readiness probe warning: probe output",
+				"Warning ContainerProbeWarning Unknown Readiness probe status: unknown",
+			},
 		},
 		{
 			probeType: liveness,
 			result:    probe.Unknown,
-			expected:  "Unknown Liveness probe status: Unknown",
+			expected: []string{
+				"Warning ContainerProbeWarning Liveness probe warning: probe output",
+				"Warning ContainerProbeWarning Unknown Liveness probe status: unknown",
+			},
 		},
 		{
 			probeType: startup,
 			result:    probe.Unknown,
-			expected:  "Unknown Startup probe status: Unknown",
+			expected: []string{
+				"Warning ContainerProbeWarning Startup probe warning: probe output",
+				"Warning ContainerProbeWarning Unknown Startup probe status: unknown",
+			},
 		},
 	}
 
 	for _, tc := range testCases {
-		pb.recordContainerEvent(pod, &container, v1.EventTypeWarning, events.ContainerProbeWarning, "%s probe warning: %s", tc.probeType, output)
-		pb.recordContainerEvent(pod, &container, v1.EventTypeWarning, events.ContainerProbeWarning, "Unknown %s probe status: %s", tc.probeType, tc.result)
+		pb.recordContainerEvent(pod, &container, v1.EventTypeWarning, "ContainerProbeWarning", "%s probe warning: %s", tc.probeType, output)
+		pb.recordContainerEvent(pod, &container, v1.EventTypeWarning, "ContainerProbeWarning", "Unknown %s probe status: %s", tc.probeType, tc.result)
 
 		// Create a slice to hold event messages
 		var events []string
@@ -446,20 +460,16 @@ func TestRecordContainerEventUnknownStatus(t *testing.T) {
 			events = append(events, <-recorder.Events)
 		}
 
-		expectedEvents := []string{
-			fmt.Sprintf("%s probe warning: %s", tc.probeType, output),
-			tc.expected,
-		}
-
-		if len(events) != len(expectedEvents) {
-			t.Errorf("unexpected number of events, expected %d got %d", len(expectedEvents), len(events))
+		if len(events) != len(tc.expected) {
+			t.Errorf("unexpected number of events, expected %d got %d", len(tc.expected), len(events))
 			continue
 		}
 
 		for i, event := range events {
-			if event != expectedEvents[i] {
-				t.Errorf("unexpected event message, expected '%s' got '%s'", expectedEvents[i], event)
+			if event != tc.expected[i] {
+				t.Errorf("unexpected event message, expected '%s' got '%s'", tc.expected[i], event)
 			}
 		}
 	}
+
 }
