@@ -27,6 +27,7 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/record"
@@ -358,8 +359,7 @@ func TestNewProber(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			switch {
-			case tt.got != tt.expect:
+			if tt.got != tt.expect {
 				t.Errorf("Expected %v, but got %v", tt.expect, tt.got)
 			}
 		})
@@ -392,6 +392,10 @@ func TestExecInContainer_Start(t *testing.T) {
 }
 
 func TestRecordContainerEventUnknownStatus(t *testing.T) {
+
+	scheme := runtime.NewScheme()
+	v1.AddToScheme(scheme)
+
 	pod := &v1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-pod",
@@ -446,8 +450,8 @@ func TestRecordContainerEventUnknownStatus(t *testing.T) {
 		var events []string
 
 		// Receive events from the channel
-		for event := range recorder.Events {
-			events = append(events, event)
+		for i := 0; i < 2; i++ {
+			events = append(events, <-recorder.Events)
 		}
 
 		expectedEvents := []string{
