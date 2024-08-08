@@ -54,3 +54,6 @@ const TmpfsNoswapSupportKernelVersion = "6.4"
 // nftables mode with by default. This is not directly related to any specific kernel
 // commit; see https://issues.k8s.io/122743#issuecomment-1893922424
 const NFTablesKubeProxyKernelVersion = "5.13"
+
+// 
+const CgroupV2KernelVersion = "5.8"
