@@ -394,7 +394,9 @@ func TestExecInContainer_Start(t *testing.T) {
 func TestRecordContainerEventUnknownStatus(t *testing.T) {
 
 	scheme := runtime.NewScheme()
-	v1.AddToScheme(scheme)
+	if err := v1.AddToScheme(scheme); err != nil {
+		t.Errorf("failed to add v1 to scheme: %v", err)
+	}
 
 	pod := &v1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
