@@ -27,8 +27,6 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/record"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
@@ -392,20 +390,18 @@ func TestExecInContainer_Start(t *testing.T) {
 }
 
 func TestRecordContainerEventUnknownStatus(t *testing.T) {
-	s := v1.PodSpec{}
-
-	scheme := runtime.NewScheme()
-	if err := v1.AddToScheme(scheme); err != nil {
-		t.Errorf("failed to add v1 to scheme: %v", err)
-	}
 
 	pod := &v1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-pod",
-			Namespace: "default",
-			UID:       types.UID("12345"),
+			UID: "test-probe-pod",
 		},
-		Spec: s,
+		Spec: v1.PodSpec{
+			Containers: []v1.Container{
+				{
+					Name: "test-probe-container",
+				},
+			},
+		},
 	}
 
 	container := pod.Spec.Containers[0]
