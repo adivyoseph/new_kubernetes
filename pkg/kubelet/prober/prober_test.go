@@ -392,6 +392,7 @@ func TestExecInContainer_Start(t *testing.T) {
 }
 
 func TestRecordContainerEventUnknownStatus(t *testing.T) {
+	s := v1.PodSpec{}
 
 	scheme := runtime.NewScheme()
 	if err := v1.AddToScheme(scheme); err != nil {
@@ -404,14 +405,7 @@ func TestRecordContainerEventUnknownStatus(t *testing.T) {
 			Namespace: "default",
 			UID:       types.UID("12345"),
 		},
-		Spec: v1.PodSpec{
-			Containers: []v1.Container{
-				{
-					Name:  "test-container",
-					Image: "nginx",
-				},
-			},
-		},
+		Spec: s,
 	}
 
 	container := pod.Spec.Containers[0]
