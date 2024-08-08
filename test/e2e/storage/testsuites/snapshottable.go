@@ -102,6 +102,7 @@ func (s *snapshottableTestSuite) SkipUnsupportedTests(driver storageframework.Te
 	if !ok {
 		e2eskipper.Skipf("Driver %q does not support dynamic provisioning - skipping", driver.GetDriverInfo().Name)
 	}
+
 }
 
 func (s *snapshottableTestSuite) DefineTests(driver storageframework.TestDriver, pattern storageframework.TestPattern) {
@@ -255,6 +256,10 @@ func (s *snapshottableTestSuite) DefineTests(driver storageframework.TestDriver,
 
 				pvc = volumeResource.Pvc
 				sc = volumeResource.Sc
+
+				pvc.Annotations["label"] = "group"
+				pvc, err = cs.CoreV1().PersistentVolumeClaims(pvc.Namespace).Update(ctx, pvc, metav1.UpdateOptions{})
+				framework.ExpectNoError(err)
 
 				// The pod should be in the Success state.
 				ginkgo.By("[init] check pod success")
