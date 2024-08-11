@@ -180,17 +180,23 @@ func (m *managerImpl) Start() error {
 	if err != nil {
 		return err
 	}
-	go func() {
-		for {
-			if stop != nil {
-				<-stop
-			}
+	timer := time.NewTimer(dbusReconnectPeriod)
 
-			time.Sleep(dbusReconnectPeriod)
-			m.logger.V(1).Info("Restarting watch for node shutdown events")
-			stop, err = m.start()
-			if err != nil {
-				m.logger.Error(err, "Unable to watch the node for shutdown events")
+	go func() {
+		defer timer.Stop()
+		for {
+			select {
+			case <-timer.C:
+				if stop != nil {
+					<-stop
+				}
+				m.logger.V(1).Info("Restarting watch for node shutdown events")
+				stop, err = m.start()
+				if err != nil {
+					m.logger.Error(err, "Unable to watch the node for shutdown events")
+				}
+				// Reset the timer to the initial period
+				timer.Reset(dbusReconnectPeriod)
 			}
 		}
 	}()
