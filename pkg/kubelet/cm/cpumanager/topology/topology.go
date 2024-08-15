@@ -28,6 +28,14 @@ import (
 // that NUMANode.
 type NUMANodeInfo map[int]cpuset.CPUSet
 
+// CPUInfo contains the NUMA, socket, and core IDs associated with a CPU.
+type CPUInfo struct {
+	SocketID   int //server global and unique
+	NUMANodeID int //server global and unique
+	L3GroupID  int //server global and unique
+	CoreID     int
+}
+
 // CPUDetails is a map from CPU ID to Core ID, Socket ID, and NUMA ID.
 type CPUDetails map[int]CPUInfo
 
@@ -42,6 +50,148 @@ type CPUTopology struct {
 	NumSockets   int
 	NumNUMANodes int
 	CPUDetails   CPUDetails
+}
+
+type CoreResources struct {
+	Id   int // HW Id
+	Cpus []int
+}
+
+type L3GroupResources struct {
+	Id int // system wide unique
+	// ordered
+	Cores []CoreResources
+}
+
+type NumaNodeResources struct {
+	Id       int // system wide unique
+	L3Groups []L3GroupResources
+}
+
+type SocketResources struct {
+	Id int // system wide unique Id
+	//
+	NumaNodes []NumaNodeResources
+}
+
+// Server top down graph of CPU resources
+type ServerTopology struct {
+	Sockets []SocketResources
+}
+
+func (srv *ServerTopology) findSocket(socketId int) int {
+	for index, socket := range srv.Sockets {
+		if socket.Id == socketId {
+			return index
+		}
+	}
+	// new socket
+	newSocket := SocketResources{}
+	newSocket.Id = socketId
+	srv.Sockets = append(srv.Sockets, newSocket)
+	return len(srv.Sockets) - 1
+}
+
+func (srv *ServerTopology) findNuma(sockIndex int, numaId int) int {
+	for nodeIndex, node := range srv.Sockets[sockIndex].NumaNodes {
+		if node.Id == numaId {
+			return nodeIndex
+		}
+	}
+	// new node
+	newNode := NumaNodeResources{}
+	newNode.Id = socketId
+	srv.Sockets[sockIndex].NumaNodes = append(srv.Sockets[sockIndex].NumaNodes, newNode)
+	return len(srv.Sockets[sockIndex].NumaNodes) - 1
+}
+
+func (srv *ServerTopology) findL3Group(sockIndex int, numaIndex int, l3Group int) int {
+	for l3GroupIndex, L3Group := range srv.Sockets[sockIndex].NumaNodes[numaIndex].L3Groups {
+		if L3Group.Id == l3Group {
+			return l3GroupIndex
+		}
+	}
+	// new l3Group
+	newL3Group := L3GroupResources{}
+	newL3Group.Id = l3Group
+	srv.Sockets[sockIndex].NumaNodes[numaIndex].L3Groups = append(srv.Sockets[sockIndex].NumaNodes[numaIndex].L3Groups, newL3Group)
+	return len(srv.Sockets[sockIndex].NumaNodes[numaIndex].L3Groups) - 1
+}
+
+func (srv *ServerTopology) findCore(sockIndex int, numaIndex int, l3GroupIndex int, core int) int {
+	for coreIndex, Core := range srv.Sockets[sockIndex].NumaNodes[numaIndex].L3Groups[l3GroupIndex].Cores {
+		if Core.Id == core {
+			return coreIndex
+		}
+	}
+	// new core
+	newCore := CoreResources{}
+	newCore.Id = core
+	srv.Sockets[sockIndex].NumaNodes[numaIndex].L3Groups[l3GroupIndex].Cores = append(srv.Sockets[sockIndex].NumaNodes[numaIndex].L3Groups[l3GroupIndex].Cores, newCore)
+	return len(srv.Sockets[sockIndex].NumaNodes[numaIndex].L3Groups) - 1
+}
+
+func (topo *CPUTopology) NewServerTopology() *ServerTopology {
+	srv := ServerTopology{}
+
+	for cpu, cpuInfo := range topo.CPUDetails {
+		SocketIndex := srv.findSocket(cpuInfo.SocketID)
+		NumaNodeIndex := srv.findNuma(SocketIndex, cpuInfo.NUMANodeID)
+		L3GroupIndex := srv.findL3Group(SocketIndex, NumaNodeIndex, cpuInfo.L3GroupID)
+		CoreIndex := srv.findCore(SocketIndex, NumaNodeIndex, L3GroupIndex, cpuInfo.CoreID)
+		found := 0
+		for _, Cpu := range srv.Sockets[SocketIndex].NumaNodes[NumaNodeIndex].L3Groups[L3GroupIndex].Cores[CoreIndex].Cpus {
+			if cpu == Cpu {
+				found = 1
+			}
+		}
+		if found == 0 {
+			newCpu := cpu
+			srv.Sockets[SocketIndex].NumaNodes[NumaNodeIndex].L3Groups[L3GroupIndex].Cores[CoreIndex].Cpus =
+				append(srv.Sockets[SocketIndex].NumaNodes[NumaNodeIndex].L3Groups[L3GroupIndex].Cores[CoreIndex].Cpus, newCpu)
+		}
+	}
+
+	//sort l3groups
+	for _, socket := range srv.Sockets {
+		for _, node := range socket.NumaNodes {
+			for l3Loop := 1; l3Loop < (len(node.L3Groups) - 1); l3Loop++ {
+				for l3Index := 1; l3Index < (len(node.L3Groups) - 1); l3Index++ {
+					if node.LGroups[l3Index].Cores[len(node.L3Groups[l3Index].Cores)-1].cpu[0] +1 > node.L3Groups[l3Index+1].Cores[0].cpu[0] {
+
+					tempL3 := L3GroupResources{}
+					tempL3 = node.L3Groups[l3Index]
+					node.L3Groups[l3Index] = node.L3Groups[l3Index+1]
+					node.L3Groups[l3Index+1] = tempL3
+
+				}
+
+			}
+		}
+	}
+
+
+	//debug
+	klog.InfoS("NewServerTopology()")
+	for sockIndex := o; sockIndex < len(srv.Sockets); sockIndex++ {
+		klog.InfoS("socket", "index", sockIndex, "Id", srv.Sockets[sockIndex].Id)
+		for numaIndex := o; numaIndex < len(srv.Sockets[sockIndex].NumaNodes); numaIndex++ {
+			klog.InfoS("node  ", "index", numaIndex, "Id", srv.Sockets[sockIndex].NumaNodes[numaIndex].Id)
+			for l3Index := 0; l3Index < len(srv.Sockets[sockIndex].NumaNodes[numaIndex].L3Groups); l3Index++ {
+				klog.InfoS("   l3group", "index", l3Index, "Id", srv.Sockets[sockIndex].NumaNodes[numaIndex].L3Groups[l3Index].Id)
+				for coreIndex := 0; coreIndex < len(srv.Sockets[sockIndex].NumaNodes[numaIndex].L3Groups[l3Index].Cores); coreIndex++ {
+					if len(srv.Sockets[sockIndex].NumaNodes[numaIndex].L3Groups[l3Index].Cores[coreIndex].Cpus) < 2 {
+						klog.InfoS("        Core", "index", coreIndex, "cpu", srv.Sockets[sockIndex].NumaNodes[numaIndex].L3Groups[l3Index].Cores[coreIndex].Cpus[0])
+					} else {
+						klog.InfoS("        Core", "index", coreIndex, "cpu0", srv.Sockets[sockIndex].NumaNodes[numaIndex].L3Groups[l3Index].Cores[coreIndex].Cpus[0],
+																		"cpu1", srv.Sockets[sockIndex].NumaNodes[numaIndex].L3Groups[l3Index].Cores[coreIndex].Cpus[1])
+					}
+				}
+			}
+		}
+	}
+
+	return &srv
 }
 
 // CPUsPerCore returns the number of logical CPUs are associated with
@@ -88,13 +238,6 @@ func (topo *CPUTopology) CPUNUMANodeID(cpu int) (int, error) {
 		return -1, fmt.Errorf("unknown CPU ID: %d", cpu)
 	}
 	return info.NUMANodeID, nil
-}
-
-// CPUInfo contains the NUMA, socket, and core IDs associated with a CPU.
-type CPUInfo struct {
-	NUMANodeID int
-	SocketID   int
-	CoreID     int
 }
 
 // KeepOnly returns a new CPUDetails object with only the supplied cpus.
@@ -259,10 +402,17 @@ func Discover(machineInfo *cadvisorapi.MachineInfo) (*CPUTopology, error) {
 		for _, core := range node.Cores {
 			if coreID, err := getUniqueCoreID(core.Threads); err == nil {
 				for _, cpu := range core.Threads {
+					//the last level cache details may not be initialized on some platforms
+					if len(core.UncoreCaches) == 0 {
+						newCache := cadvisorapi.Cache{}
+						newCache.Id = node.Id //the cache ID is global and must be unique, reuse node.Id
+						core.UncoreCaches = append(core.UncoreCaches, newCache)
+					}
 					CPUDetails[cpu] = CPUInfo{
 						CoreID:     coreID,
 						SocketID:   core.SocketID,
 						NUMANodeID: node.Id,
+						L3GroupID:  core.UncoreCaches[0].Id,
 					}
 				}
 			} else {

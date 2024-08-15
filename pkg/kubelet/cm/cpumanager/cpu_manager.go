@@ -19,7 +19,6 @@ package cpumanager
 import (
 	"context"
 	"fmt"
-	"math"
 	"sync"
 	"time"
 
@@ -97,6 +96,13 @@ type Manager interface {
 
 type manager struct {
 	sync.Mutex
+	//new
+	cpuMgrStrict    bool //set if CPU manager policy is Strict
+	cpuMgrStrictPod bool //set if strict and allocation should group sidecars, default
+
+	serverTopology *topology.ServerTopology
+
+	//old
 	policy Policy
 
 	// reconcilePeriod is the duration between calls to reconcileState.
@@ -153,53 +159,77 @@ func (s *sourcesReadyStub) AllReady() bool          { return true }
 // NewManager creates new cpu manager based on provided policy
 func NewManager(cpuPolicyName string, cpuPolicyOptions map[string]string, reconcilePeriod time.Duration, machineInfo *cadvisorapi.MachineInfo, specificCPUs cpuset.CPUSet, nodeAllocatableReservation v1.ResourceList, stateFileDirectory string, affinity topologymanager.Store) (Manager, error) {
 	var topo *topology.CPUTopology
-	var policy Policy
 	var err error
+	klog.InfoS("CPU_Manager  NewManager()")
+	var cpuMgrStrict = false
 
 	switch policyName(cpuPolicyName) {
-
 	case PolicyNone:
-		policy, err = NewNonePolicy(cpuPolicyOptions)
-		if err != nil {
-			return nil, fmt.Errorf("new none policy error: %w", err)
-		}
-
+		cpuMgrStrict = false
 	case PolicyStatic:
-		topo, err = topology.Discover(machineInfo)
-		if err != nil {
-			return nil, err
-		}
-		klog.InfoS("Detected CPU topology", "topology", topo)
-
-		reservedCPUs, ok := nodeAllocatableReservation[v1.ResourceCPU]
-		if !ok {
-			// The static policy cannot initialize without this information.
-			return nil, fmt.Errorf("[cpumanager] unable to determine reserved CPU resources for static policy")
-		}
-		if reservedCPUs.IsZero() {
-			// The static policy requires this to be nonzero. Zero CPU reservation
-			// would allow the shared pool to be completely exhausted. At that point
-			// either we would violate our guarantee of exclusivity or need to evict
-			// any pod that has at least one container that requires zero CPUs.
-			// See the comments in policy_static.go for more details.
-			return nil, fmt.Errorf("[cpumanager] the static policy requires systemreserved.cpu + kubereserved.cpu to be greater than zero")
-		}
-
-		// Take the ceiling of the reservation, since fractional CPUs cannot be
-		// exclusively allocated.
-		reservedCPUsFloat := float64(reservedCPUs.MilliValue()) / 1000
-		numReservedCPUs := int(math.Ceil(reservedCPUsFloat))
-		policy, err = NewStaticPolicy(topo, numReservedCPUs, specificCPUs, affinity, cpuPolicyOptions)
-		if err != nil {
-			return nil, fmt.Errorf("new static policy error: %w", err)
-		}
+		cpuMgrStrict = true
 
 	default:
 		return nil, fmt.Errorf("unknown policy: \"%s\"", cpuPolicyName)
 	}
+	klog.InfoS("CPU_Manager  ", "puMgrStrict", cpuMgrStrict)
+	topo, err = topology.Discover(machineInfo)
+	if err != nil {
+		return nil, err
+	}
+	klog.InfoS("CPU_Manager  NewManager, Detected CPU topology", "topology", topo)
 
+	serverTopology := topo.NewServerTopology()
+	klog.InfoS("CPU_Manager  NewManagery", "severtopology", serverTopology)
+	/*
+
+		var policy Policy
+
+
+		switch policyName(cpuPolicyName) {
+
+		case PolicyNone:
+			policy, err = NewNonePolicy(cpuPolicyOptions)
+			if err != nil {
+				return nil, fmt.Errorf("new none policy error: %w", err)
+			}
+
+		case PolicyStatic:
+			topo, err = topology.Discover(machineInfo)
+			if err != nil {
+				return nil, err
+			}
+			klog.InfoS("Detected CPU topology", "topology", topo)
+
+			reservedCPUs, ok := nodeAllocatableReservation[v1.ResourceCPU]
+			if !ok {
+				// The static policy cannot initialize without this information.
+				return nil, fmt.Errorf("[cpumanager] unable to determine reserved CPU resources for static policy")
+			}
+			if reservedCPUs.IsZero() {
+				// The static policy requires this to be nonzero. Zero CPU reservation
+				// would allow the shared pool to be completely exhausted. At that point
+				// either we would violate our guarantee of exclusivity or need to evict
+				// any pod that has at least one container that requires zero CPUs.
+				// See the comments in policy_static.go for more details.
+				return nil, fmt.Errorf("[cpumanager] the static policy requires systemreserved.cpu + kubereserved.cpu to be greater than zero")
+			}
+
+			// Take the ceiling of the reservation, since fractional CPUs cannot be
+			// exclusively allocated.
+			reservedCPUsFloat := float64(reservedCPUs.MilliValue()) / 1000
+			numReservedCPUs := int(math.Ceil(reservedCPUsFloat))
+			policy, err = NewStaticPolicy(topo, numReservedCPUs, specificCPUs, affinity, cpuPolicyOptions)
+			if err != nil {
+				return nil, fmt.Errorf("new static policy error: %w", err)
+			}
+
+		default:
+			return nil, fmt.Errorf("unknown policy: \"%s\"", cpuPolicyName)
+		}
+	*/
 	manager := &manager{
-		policy:                     policy,
+		//policy:                     policy,
 		reconcilePeriod:            reconcilePeriod,
 		lastUpdateState:            state.NewMemoryState(),
 		topology:                   topo,
