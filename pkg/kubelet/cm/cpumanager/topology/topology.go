@@ -52,9 +52,14 @@ type CPUTopology struct {
 	CPUDetails   CPUDetails
 }
 
+type CPUResources struct {
+	cpuNumber int // OS cpu number
+	owner     int // free, reserved, shared, strict
+}
+
 type CoreResources struct {
 	Id   int // HW Id
-	Cpus []int
+	Cpus []CPUResources
 }
 
 type L3GroupResources struct {
@@ -226,6 +231,12 @@ func (topo *CPUTopology) NewServerTopology() *ServerTopology {
 	}
 
 	return &srv
+}
+
+// mark reserved cpus in topology tree
+// allow per cpu
+func (srv *ServerTopology) setReservedCPUs(cpus cpuset.CPUSet) {
+
 }
 
 // CPUsPerCore returns the number of logical CPUs are associated with

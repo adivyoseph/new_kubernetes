@@ -161,6 +161,7 @@ func NewManager(cpuPolicyName string, cpuPolicyOptions map[string]string, reconc
 	var topo *topology.CPUTopology
 	var err error
 	klog.InfoS("CPU_Manager  NewManager()")
+
 	var cpuMgrStrict = false
 
 	switch policyName(cpuPolicyName) {
@@ -173,6 +174,9 @@ func NewManager(cpuPolicyName string, cpuPolicyOptions map[string]string, reconc
 		return nil, fmt.Errorf("unknown policy: \"%s\"", cpuPolicyName)
 	}
 	klog.InfoS("CPU_Manager  ", "puMgrStrict", cpuMgrStrict)
+	klog.InfoS("CPU_Manager  ", "cpuPolicyOptions", cpuPolicyOptions) // "full-pcpus-only":"true"
+	klog.InfoS("CPU_Manager  ", "specificCPUs", serverTopology)       // reserved
+
 	topo, err = topology.Discover(machineInfo)
 	if err != nil {
 		return nil, err
@@ -180,7 +184,24 @@ func NewManager(cpuPolicyName string, cpuPolicyOptions map[string]string, reconc
 	klog.InfoS("CPU_Manager  NewManager, Detected CPU topology", "topology", topo)
 
 	serverTopology := topo.NewServerTopology()
-	klog.InfoS("CPU_Manager  NewManagery", "severtopology", serverTopology)
+	//klog.InfoS("CPU_Manager  NewManagery", "severtopology", serverTopology)
+	reservedCPUs, ok := nodeAllocatableReservation[v1.ResourceCPU]
+	if !ok {
+		// The static policy cannot initialize without this information.
+		return nil, fmt.Errorf("[cpumanager] unable to determine reserved CPU resources for static policy")
+	}
+	klog.InfoS("CPU_Manager", "reservedCPUs", reservedCPUs)
+	serverTopology.setReservedCPUs(serverTopology)
+
+	if cpuMgrStrict && reservedCPUs.IsZero() {
+		// The static policy requires this to be nonzero. Zero CPU reservation
+		// would allow the shared pool to be completely exhausted. At that point
+		// either we would violate our guarantee of exclusivity or need to evict
+		// any pod that has at least one container that requires zero CPUs.
+		// See the comments in policy_static.go for more details.
+		return nil, fmt.Errorf("[cpumanager] the static policy requires systemreserved.cpu + kubereserved.cpu to be greater than zero")
+	}
+
 	/*
 
 		var policy Policy
@@ -236,6 +257,7 @@ func NewManager(cpuPolicyName string, cpuPolicyOptions map[string]string, reconc
 		nodeAllocatableReservation: nodeAllocatableReservation,
 		stateFileDirectory:         stateFileDirectory,
 	}
+	manager.serverTopology = serverTopology
 	manager.sourcesReady = &sourcesReadyStub{}
 	return manager, nil
 }
