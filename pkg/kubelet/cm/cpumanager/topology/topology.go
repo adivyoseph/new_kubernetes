@@ -100,7 +100,7 @@ func (srv *ServerTopology) findNuma(sockIndex int, numaId int) int {
 	}
 	// new node
 	newNode := NumaNodeResources{}
-	newNode.Id = socketId
+	newNode.Id = numaId
 	srv.Sockets[sockIndex].NumaNodes = append(srv.Sockets[sockIndex].NumaNodes, newNode)
 	return len(srv.Sockets[sockIndex].NumaNodes) - 1
 }
@@ -128,7 +128,7 @@ func (srv *ServerTopology) findCore(sockIndex int, numaIndex int, l3GroupIndex i
 	newCore := CoreResources{}
 	newCore.Id = core
 	srv.Sockets[sockIndex].NumaNodes[numaIndex].L3Groups[l3GroupIndex].Cores = append(srv.Sockets[sockIndex].NumaNodes[numaIndex].L3Groups[l3GroupIndex].Cores, newCore)
-	return len(srv.Sockets[sockIndex].NumaNodes[numaIndex].L3Groups) - 1
+	return len(srv.Sockets[sockIndex].NumaNodes[numaIndex].L3Groups[l3GroupIndex].Cores) - 1
 }
 
 func (topo *CPUTopology) NewServerTopology() *ServerTopology {
@@ -152,30 +152,64 @@ func (topo *CPUTopology) NewServerTopology() *ServerTopology {
 		}
 	}
 
-	//sort l3groups
-	for _, socket := range srv.Sockets {
-		for _, node := range socket.NumaNodes {
-			for l3Loop := 1; l3Loop < (len(node.L3Groups) - 1); l3Loop++ {
-				for l3Index := 1; l3Index < (len(node.L3Groups) - 1); l3Index++ {
-					if node.LGroups[l3Index].Cores[len(node.L3Groups[l3Index].Cores)-1].cpu[0] +1 > node.L3Groups[l3Index+1].Cores[0].cpu[0] {
-
-					tempL3 := L3GroupResources{}
-					tempL3 = node.L3Groups[l3Index]
-					node.L3Groups[l3Index] = node.L3Groups[l3Index+1]
-					node.L3Groups[l3Index+1] = tempL3
+	//sort cpus within a core
+	if len(srv.Sockets[0].NumaNodes[0].L3Groups[0].Cores[0].Cpus) > 1 {
+		for _, socket := range srv.Sockets {
+			for _, node := range socket.NumaNodes {
+				for _, l3Group := range node.L3Groups {
+					for _, core := range l3Group.Cores {
+						cpu0 := core.Cpus[0]
+						if cpu0 > core.Cpus[1] {
+							core.Cpus[0] = core.Cpus[1]
+							core.Cpus[1] = cpu0
+						}
+					}
+				}
+			}
+		}
+	}
+	//sort Cores within an L3Group
+	if len(srv.Sockets[0].NumaNodes[0].L3Groups[0].Cores) > 1 {
+		for _, socket := range srv.Sockets {
+			for _, node := range socket.NumaNodes {
+				for _, l3Group := range node.L3Groups {
+					for cores := 0; cores < len(l3Group.Cores); cores++ {
+						for coreIndex := 1; coreIndex < len(l3Group.Cores); coreIndex++ {
+							if l3Group.Cores[coreIndex-1].Cpus[0] > l3Group.Cores[coreIndex].Cpus[0] {
+								tempCore := l3Group.Cores[coreIndex-1].Cpus
+								l3Group.Cores[coreIndex-1].Cpus = l3Group.Cores[coreIndex].Cpus
+								l3Group.Cores[coreIndex].Cpus = tempCore
+							}
+						}
+					}
 
 				}
+			}
+		}
+	}
+	//sort L3Group with a numa node
+	if len(srv.Sockets[0].NumaNodes[0].L3Groups) > 1 {
+		for _, socket := range srv.Sockets {
+			for _, node := range socket.NumaNodes {
+				for l3Groups := 0; l3Groups < len(node.L3Groups); l3Groups++ {
+					for l3GroupIndex := 1; l3GroupIndex < len(node.L3Groups); l3GroupIndex++ {
+						if node.L3Groups[l3GroupIndex-1].Cores[0].Cpus[0] > node.L3Groups[l3GroupIndex].Cores[0].Cpus[0] {
+							tempL3Group := node.L3Groups[l3GroupIndex-1]
+							node.L3Groups[l3GroupIndex-1] = node.L3Groups[l3GroupIndex]
+							node.L3Groups[l3GroupIndex] = tempL3Group
 
+						}
+					}
+				}
 			}
 		}
 	}
 
-
 	//debug
 	klog.InfoS("NewServerTopology()")
-	for sockIndex := o; sockIndex < len(srv.Sockets); sockIndex++ {
+	for sockIndex := 0; sockIndex < len(srv.Sockets); sockIndex++ {
 		klog.InfoS("socket", "index", sockIndex, "Id", srv.Sockets[sockIndex].Id)
-		for numaIndex := o; numaIndex < len(srv.Sockets[sockIndex].NumaNodes); numaIndex++ {
+		for numaIndex := 0; numaIndex < len(srv.Sockets[sockIndex].NumaNodes); numaIndex++ {
 			klog.InfoS("node  ", "index", numaIndex, "Id", srv.Sockets[sockIndex].NumaNodes[numaIndex].Id)
 			for l3Index := 0; l3Index < len(srv.Sockets[sockIndex].NumaNodes[numaIndex].L3Groups); l3Index++ {
 				klog.InfoS("   l3group", "index", l3Index, "Id", srv.Sockets[sockIndex].NumaNodes[numaIndex].L3Groups[l3Index].Id)
@@ -184,7 +218,7 @@ func (topo *CPUTopology) NewServerTopology() *ServerTopology {
 						klog.InfoS("        Core", "index", coreIndex, "cpu", srv.Sockets[sockIndex].NumaNodes[numaIndex].L3Groups[l3Index].Cores[coreIndex].Cpus[0])
 					} else {
 						klog.InfoS("        Core", "index", coreIndex, "cpu0", srv.Sockets[sockIndex].NumaNodes[numaIndex].L3Groups[l3Index].Cores[coreIndex].Cpus[0],
-																		"cpu1", srv.Sockets[sockIndex].NumaNodes[numaIndex].L3Groups[l3Index].Cores[coreIndex].Cpus[1])
+							"cpu1", srv.Sockets[sockIndex].NumaNodes[numaIndex].L3Groups[l3Index].Cores[coreIndex].Cpus[1])
 					}
 				}
 			}
