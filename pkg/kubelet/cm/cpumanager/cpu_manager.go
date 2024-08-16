@@ -102,6 +102,8 @@ type manager struct {
 
 	serverTopology *topology.ServerTopology
 
+
+
 	//old
 	policy Policy
 
@@ -173,7 +175,7 @@ func NewManager(cpuPolicyName string, cpuPolicyOptions map[string]string, reconc
 	default:
 		return nil, fmt.Errorf("unknown policy: \"%s\"", cpuPolicyName)
 	}
-	klog.InfoS("CPU_Manager  ", "puMgrStrict", cpuMgrStrict)
+	klog.InfoS("CPU_Manager  ", "cpuMgrStrict", cpuMgrStrict)
 	klog.InfoS("CPU_Manager  ", "cpuPolicyOptions", cpuPolicyOptions) // "full-pcpus-only":"true"
 	klog.InfoS("CPU_Manager  ", "specificCPUs", serverTopology)       // reserved
 
@@ -191,7 +193,7 @@ func NewManager(cpuPolicyName string, cpuPolicyOptions map[string]string, reconc
 		return nil, fmt.Errorf("[cpumanager] unable to determine reserved CPU resources for static policy")
 	}
 	klog.InfoS("CPU_Manager", "reservedCPUs", reservedCPUs)
-	serverTopology.setReservedCPUs(serverTopology)
+	serverTopology.setReservedCPUs(reservedCPUs)
 
 	if cpuMgrStrict && reservedCPUs.IsZero() {
 		// The static policy requires this to be nonzero. Zero CPU reservation
@@ -249,8 +251,14 @@ func NewManager(cpuPolicyName string, cpuPolicyOptions map[string]string, reconc
 			return nil, fmt.Errorf("unknown policy: \"%s\"", cpuPolicyName)
 		}
 	*/
+
+	policy, err = NewStaticPolicy(topo, numReservedCPUs, specificCPUs, affinity, cpuPolicyOptions)
+			if err != nil {
+				return nil, fmt.Errorf("new static policy error: %w", err)
+			}
+
 	manager := &manager{
-		//policy:                     policy,
+		policy:                     policy,
 		reconcilePeriod:            reconcilePeriod,
 		lastUpdateState:            state.NewMemoryState(),
 		topology:                   topo,
@@ -263,7 +271,7 @@ func NewManager(cpuPolicyName string, cpuPolicyOptions map[string]string, reconc
 }
 
 func (m *manager) Start(activePods ActivePodsFunc, sourcesReady config.SourcesReady, podStatusProvider status.PodStatusProvider, containerRuntime runtimeService, initialContainers containermap.ContainerMap) error {
-	klog.InfoS("Starting CPU manager", "policy", m.policy.Name())
+	klog.InfoS("Starting CPU manager")
 	klog.InfoS("Reconciling", "reconcilePeriod", m.reconcilePeriod)
 	m.sourcesReady = sourcesReady
 	m.activePods = activePods
@@ -271,9 +279,10 @@ func (m *manager) Start(activePods ActivePodsFunc, sourcesReady config.SourcesRe
 	m.containerRuntime = containerRuntime
 	m.containerMap = initialContainers
 
-	stateImpl, err := state.NewCheckpointState(m.stateFileDirectory, cpuManagerStateFileName, m.policy.Name(), m.containerMap)
+	//creat in memory state and file checkpoint
+	stateImpl, err := state.NewCheckpointState(m.stateFileDirectory, cpuManagerStateFileName,  m.containerMap)
 	if err != nil {
-		klog.ErrorS(err, "Could not initialize checkpoint manager, please drain node and remove policy state file")
+		klog.ErrorS(err, "Could not initialize checkpoint manager, please drain node and remove cpu_manager state file")
 		return err
 	}
 	m.state = stateImpl
@@ -307,6 +316,7 @@ func (m *manager) Allocate(p *v1.Pod, c *v1.Container) error {
 	defer m.Unlock()
 
 	// Call down into the policy to assign this container CPUs if required.
+	// strict and shared cpu pods
 	err := m.policy.Allocate(m.state, p, c)
 	if err != nil {
 		klog.ErrorS(err, "Allocate error")
@@ -319,9 +329,9 @@ func (m *manager) Allocate(p *v1.Pod, c *v1.Container) error {
 func (m *manager) AddContainer(pod *v1.Pod, container *v1.Container, containerID string) {
 	m.Lock()
 	defer m.Unlock()
-	if cset, exists := m.state.GetCPUSet(string(pod.UID), container.Name); exists {
-		m.lastUpdateState.SetCPUSet(string(pod.UID), container.Name, cset)
-	}
+	//if cset, exists := m.state.GetCPUSet(string(pod.UID), container.Name); exists {
+	//	m.lastUpdateState.SetCPUSet(string(pod.UID), container.Name, cset)
+	//}
 	m.containerMap.Add(string(pod.UID), container.Name, containerID)
 }
 
@@ -388,6 +398,9 @@ func (m *manager) GetPodTopologyHints(pod *v1.Pod) map[string][]topologymanager.
 }
 
 func (m *manager) GetAllocatableCPUs() cpuset.CPUSet {
+
+	m.allocatableCPUs = m.State().GetAvailableCPUSet()
+
 	return m.allocatableCPUs.Clone()
 }
 

@@ -28,101 +28,43 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/checkpointmanager/errors"
 )
 
-var _ checkpointmanager.Checkpoint = &CPUManagerCheckpointV1{}
-var _ checkpointmanager.Checkpoint = &CPUManagerCheckpointV2{}
+
 var _ checkpointmanager.Checkpoint = &CPUManagerCheckpoint{}
 
-// CPUManagerCheckpoint struct is used to store cpu/pod assignments in a checkpoint in v2 format
 type CPUManagerCheckpoint struct {
-	PolicyName    string                       `json:"policyName"`
-	DefaultCPUSet string                       `json:"defaultCpuSet"`
-	Entries       map[string]map[string]string `json:"entries,omitempty"`
+	ReservedCPUSet    string                   `json:"reservedCpuSet"`
+	AvaiableCPUSet    string                   `json:"availableCpuSet"`
+	StaticContainers  map[string]map[string]string `json:"staticContainers,omitempty"`
+	NormalContainers  map[string]map[string]string `json:"normalContainers,omitempty"`
 	Checksum      checksum.Checksum            `json:"checksum"`
 }
 
-// CPUManagerCheckpointV1 struct is used to store cpu/pod assignments in a checkpoint in v1 format
-type CPUManagerCheckpointV1 struct {
-	PolicyName    string            `json:"policyName"`
-	DefaultCPUSet string            `json:"defaultCpuSet"`
-	Entries       map[string]string `json:"entries,omitempty"`
-	Checksum      checksum.Checksum `json:"checksum"`
-}
-
-// CPUManagerCheckpointV2 struct is used to store cpu/pod assignments in a checkpoint in v2 format
-type CPUManagerCheckpointV2 = CPUManagerCheckpoint
 
 // NewCPUManagerCheckpoint returns an instance of Checkpoint
 func NewCPUManagerCheckpoint() *CPUManagerCheckpoint {
-	//nolint:staticcheck // unexported-type-in-api user-facing error message
-	return newCPUManagerCheckpointV2()
-}
-
-func newCPUManagerCheckpointV1() *CPUManagerCheckpointV1 {
-	return &CPUManagerCheckpointV1{
-		Entries: make(map[string]string),
+	return &CPUManagerCheckpoint{
+		StaticContainers: make(map[string]map[string]string),
+		NormalContainers: make(map[string]map[string]string),
 	}
 }
 
-func newCPUManagerCheckpointV2() *CPUManagerCheckpointV2 {
-	return &CPUManagerCheckpointV2{
-		Entries: make(map[string]map[string]string),
-	}
-}
 
-// MarshalCheckpoint returns marshalled checkpoint in v1 format
-func (cp *CPUManagerCheckpointV1) MarshalCheckpoint() ([]byte, error) {
+// MarshalCheckpoint returns marshalled checkpoint 
+func (cp *CPUManagerCheckpoint) MarshalCheckpoint() ([]byte, error) {
 	// make sure checksum wasn't set before so it doesn't affect output checksum
 	cp.Checksum = 0
 	cp.Checksum = checksum.New(cp)
 	return json.Marshal(*cp)
 }
 
-// MarshalCheckpoint returns marshalled checkpoint in v2 format
-func (cp *CPUManagerCheckpointV2) MarshalCheckpoint() ([]byte, error) {
-	// make sure checksum wasn't set before so it doesn't affect output checksum
-	cp.Checksum = 0
-	cp.Checksum = checksum.New(cp)
-	return json.Marshal(*cp)
-}
 
-// UnmarshalCheckpoint tries to unmarshal passed bytes to checkpoint in v1 format
-func (cp *CPUManagerCheckpointV1) UnmarshalCheckpoint(blob []byte) error {
+// UnmarshalCheckpoint tries to unmarshal passed bytes to checkpoint 
+func (cp *CPUManagerCheckpoint) UnmarshalCheckpoint(blob []byte) error {
 	return json.Unmarshal(blob, cp)
 }
 
-// UnmarshalCheckpoint tries to unmarshal passed bytes to checkpoint in v2 format
-func (cp *CPUManagerCheckpointV2) UnmarshalCheckpoint(blob []byte) error {
-	return json.Unmarshal(blob, cp)
-}
-
-// VerifyChecksum verifies that current checksum of checkpoint is valid in v1 format
-func (cp *CPUManagerCheckpointV1) VerifyChecksum() error {
-	if cp.Checksum == 0 {
-		// accept empty checksum for compatibility with old file backend
-		return nil
-	}
-
-	ck := cp.Checksum
-	cp.Checksum = 0
-	object := dump.ForHash(cp)
-	object = strings.Replace(object, "CPUManagerCheckpointV1", "CPUManagerCheckpoint", 1)
-	cp.Checksum = ck
-
-	hash := fnv.New32a()
-	fmt.Fprintf(hash, "%v", object)
-	actualCS := checksum.Checksum(hash.Sum32())
-	if cp.Checksum != actualCS {
-		return &errors.CorruptCheckpointError{
-			ActualCS:   uint64(actualCS),
-			ExpectedCS: uint64(cp.Checksum),
-		}
-	}
-
-	return nil
-}
-
-// VerifyChecksum verifies that current checksum of checkpoint is valid in v2 format
-func (cp *CPUManagerCheckpointV2) VerifyChecksum() error {
+// VerifyChecksum verifies that current checksum of checkpoint is valid 
+func (cp *CPUManagerCheckpoint) VerifyChecksum() error {
 	if cp.Checksum == 0 {
 		// accept empty checksum for compatibility with old file backend
 		return nil

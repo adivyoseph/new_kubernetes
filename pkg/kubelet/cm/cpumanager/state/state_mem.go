@@ -25,93 +25,159 @@ import (
 
 type stateMemory struct {
 	sync.RWMutex
-	assignments   ContainerCPUAssignments
-	defaultCPUSet cpuset.CPUSet
+	reservedCpuSet  cpuset.CPUSet
+	availableCpuSet cpuset.CPUSet
+	staticContainers   ContainerCPUAssignments
+	normalContainers   ContainerCPUAssignments
 }
 
 var _ State = &stateMemory{}
 
 // NewMemoryState creates new State for keeping track of cpu/pod assignment
 func NewMemoryState() State {
-	klog.InfoS("Initialized new in-memory state store")
+	klog.InfoS("Initialized new in-memory cpu_state store")
 	return &stateMemory{
-		assignments:   ContainerCPUAssignments{},
-		defaultCPUSet: cpuset.New(),
+		reservedCpuSet:     cpuset.New(),
+		availableCpuSet:    cpuset.New(),
+		staticContainers:   ContainerCPUAssignments{},
+		normalContainers:   ContainerCPUAssignments{},
 	}
 }
 
-func (s *stateMemory) GetCPUSet(podUID string, containerName string) (cpuset.CPUSet, bool) {
+// only called once so no checking required
+func (s *stateMemory) SetReservedCPUSet(cpus cpuset.CPUSet)  {
+	s.RLock()
+	defer s.RUnlock()
+	klog.InfoS("SetReservedCPUSet","cpus", cpus)
+	s.reservedCpuSet = cpus
+}
+
+// assume always pre set, no checking
+func (s *stateMemory) GetReservedCPUSet() (cpuset.CPUSet) {
+	s.RLock()
+	defer s.RUnlock()
+    
+	return s.reservedCpuSet.Clone()
+}
+
+func (s *stateMemory) AddToAvailableCPUSet(cpus cpuset.CPUSet)  (cpuset.CPUSet){
+	s.RLock()
+	defer s.RUnlock()
+	
+	s.availableCpuSet.Union(cpus)
+	return s.availableCpuSet.Clone()
+}
+
+func (s *stateMemory) GetAvailableCPUSet()  (cpuset.CPUSet){
+	s.RLock()
+	defer s.RUnlock()
+	
+	return s.availableCpuSet.Clone()
+}
+
+func (s *stateMemory) RemoveFromAvailableCPUSet(cpus cpuset.CPUSet)  (cpuset.CPUSet){
+	s.RLock()
+	defer s.RUnlock()
+	
+	s.availableCpuSet.Difference(cpus)
+	return s.availableCpuSet.Clone()
+}
+
+
+
+func (s *stateMemory) IsStatic(podUID string, containerName string) (cpuset.CPUSet, bool) {
 	s.RLock()
 	defer s.RUnlock()
 
-	res, ok := s.assignments[podUID][containerName]
-	return res.Clone(), ok
+	if _, ok := s.staticContainers[podUID][containerName]; ok {
+		return s.staticContainers[podUID][containerName].cpuset.CPUSet.Clone(), true
+	}
+	return, nil, false
 }
 
-func (s *stateMemory) GetDefaultCPUSet() cpuset.CPUSet {
+func (s *stateMemory) AddToStatic(podUID string, containerName string, cpus cpuset.CPUSet) error {
 	s.RLock()
 	defer s.RUnlock()
 
-	return s.defaultCPUSet.Clone()
-}
-
-func (s *stateMemory) GetCPUSetOrDefault(podUID string, containerName string) cpuset.CPUSet {
-	if res, ok := s.GetCPUSet(podUID, containerName); ok {
-		return res
+	if _, ok := s.staticContainers[podUID]; !ok {
+		s.staticContainers[podUID] = make(map[string]cpuset.CPUSet)
 	}
-	return s.GetDefaultCPUSet()
+
+	s.staticContainers[podUID][containerName] = cpus
+	klog.InfoS("AddToStatic", "podUID", podUID, "containerName", containerName, "cpuSet", cpus)
+	return nil
 }
 
-func (s *stateMemory) GetCPUAssignments() ContainerCPUAssignments {
+
+func (s *stateMemory) RemoveFromStatic(podUID string, containerName string) error {
 	s.RLock()
 	defer s.RUnlock()
-	return s.assignments.Clone()
+
+	delete(s.staticContainers[podUID], containerName)
+	if len(s.staticContainers[podUID]) == 0 {
+		delete(s.staticContainers, podUID)
+	}
+	klog.V(2).InfoS("RemoveFromStatic", "podUID", podUID, "containerName", containerName)
+	return nil
 }
 
-func (s *stateMemory) SetCPUSet(podUID string, containerName string, cset cpuset.CPUSet) {
-	s.Lock()
-	defer s.Unlock()
+func (s *stateMemory) GetAllStaticEntries() ContainerCPUAssignments {
+	tmpStaticContainers := ContainerCPUAssignments{}
+	for entry := range s.staticContainers {
+		staticContainers = entry
+	}
+	return tmpStaticContainers
 
-	if _, ok := s.assignments[podUID]; !ok {
-		s.assignments[podUID] = make(map[string]cpuset.CPUSet)
+}
+
+
+
+func (s *stateMemory) IsNormal(podUID string, containerName string) (cpuset.CPUSet, bool) {
+	s.RLock()
+	defer s.RUnlock()
+
+	if _, ok := s.normalContainers[podUID][containerName]; ok {
+		return s.normalContainers[podUID][containerName].cpuset.CPUSet.Clone(), true
+	}
+	return, nil, false
+}
+
+func (s *stateMemory) AddToNormal(podUID string, containerName string, cpus cpuset.CPUSet) error {
+	s.RLock()
+	defer s.RUnlock()
+
+	if _, ok := s.normalContainers[podUID]; !ok {
+		s.normalContainers[podUID] = make(map[string]cpuset.CPUSet)
 	}
 
-	s.assignments[podUID][containerName] = cset
-	klog.InfoS("Updated desired CPUSet", "podUID", podUID, "containerName", containerName, "cpuSet", cset)
+	s.normalContainers[podUID][containerName] = cpus
+	klog.InfoS("AddToNormal", "podUID", podUID, "containerName", containerName, "cpuSet", cpus)
+	return nil
 }
 
-func (s *stateMemory) SetDefaultCPUSet(cset cpuset.CPUSet) {
-	s.Lock()
-	defer s.Unlock()
 
-	s.defaultCPUSet = cset
-	klog.InfoS("Updated default CPUSet", "cpuSet", cset)
-}
+func (s *stateMemory) RemoveFromNormal(podUID string, containerName string) error {
+	s.RLock()
+	defer s.RUnlock()
 
-func (s *stateMemory) SetCPUAssignments(a ContainerCPUAssignments) {
-	s.Lock()
-	defer s.Unlock()
-
-	s.assignments = a.Clone()
-	klog.InfoS("Updated CPUSet assignments", "assignments", a)
-}
-
-func (s *stateMemory) Delete(podUID string, containerName string) {
-	s.Lock()
-	defer s.Unlock()
-
-	delete(s.assignments[podUID], containerName)
-	if len(s.assignments[podUID]) == 0 {
-		delete(s.assignments, podUID)
+	delete(s.normalContainers[podUID], containerName)
+	if len(s.normalContainers[podUID]) == 0 {
+		delete(s.normalContainers, podUID)
 	}
-	klog.V(2).InfoS("Deleted CPUSet assignment", "podUID", podUID, "containerName", containerName)
+	klog.V(2).InfoS("RemoveFromNormal", "podUID", podUID, "containerName", containerName)
+	return nil
 }
+
+
 
 func (s *stateMemory) ClearState() {
 	s.Lock()
 	defer s.Unlock()
 
-	s.defaultCPUSet = cpuset.CPUSet{}
-	s.assignments = make(ContainerCPUAssignments)
-	klog.V(2).InfoS("Cleared state")
+	s.reservedCpuSet 	= cpuset.CPUSet{}
+	s.availableCpuSet 	= cpuset.CPUSet{}
+	s.staticContainers 	= make(ContainerCPUAssignments)
+	s.normalContainers 	= make(ContainerCPUAssignments)
+
+	klog.V(2).InfoS("Cleared cpu_state in memory")
 }

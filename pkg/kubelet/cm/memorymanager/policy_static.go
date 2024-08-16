@@ -95,12 +95,15 @@ func (p *staticPolicy) Start(s state.State) error {
 	return nil
 }
 
+
+
 // Allocate call is idempotent
+// from cpu_manager
 func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Container) (rerr error) {
 	// allocate the memory only for guaranteed pods
 	if v1qos.GetPodQOS(pod) != v1.PodQOSGuaranteed {
 		return nil
-	}
+	} 
 
 	podUID := string(pod.UID)
 	klog.InfoS("Allocate", "pod", klog.KObj(pod), "containerName", container.Name)

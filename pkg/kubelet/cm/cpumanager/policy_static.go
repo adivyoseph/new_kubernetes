@@ -293,6 +293,15 @@ func (p *staticPolicy) updateCPUsToReuse(pod *v1.Pod, container *v1.Container, c
 	p.cpusToReuse[string(pod.UID)] = p.cpusToReuse[string(pod.UID)].Difference(cset)
 }
 
+func (p *staticPolicy) AllocateStatic(s state.State, pod *v1.Pod, container *v1.Container) (rerr error) {
+
+}
+
+
+func (p *staticPolicy) AllocateShared(s state.State, pod *v1.Pod, container *v1.Container) (rerr error) {
+
+}
+
 func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Container) (rerr error) {
 	numCPUs := p.guaranteedCPUs(pod, container)
 	if numCPUs == 0 {
